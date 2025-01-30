@@ -1,17 +1,97 @@
-﻿import streamlit as st
-import os
-import sys
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import streamlit as st
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
 import torch
 import pandas as pd
 import numpy as np
 from io import BytesIO
+from datasets import Dataset
 
-# Load the IndoBERT model and tokenizer with a valid model identifier
-model_name = "indobenchmark/indobert-large-p2"  
-import pandas as pd
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
-import torch
+# Constants
+NUM_LABELS = 3  # Jumlah kelas: Strategis, Taktikal, Operasional
+model_name = "indobenchmark/indobert-large-p2"
+
+# Cache untuk model dan tokenizer
+@st.cache_resource
+def load_model_and_tokenizer():
+    try:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            num_labels=NUM_LABELS,
+            token=st.secrets["HUGGINGFACE_API_KEY"],
+            ignore_mismatched_sizes=True
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            token=st.secrets["HUGGINGFACE_API_KEY"]
+        )
+        return model, tokenizer
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None, None
+
+# Load model dan tokenizer
+model, tokenizer = load_model_and_tokenizer()
+
+# Set device
+device = "cuda" if torch.cuda.is_available() else "cpu"
+if model is not None:
+    model = model.to(device)
+
+def initialize_model_weights():
+    # Data training awal
+    initial_data = {
+        'text': [
+            "Merumuskan strategi jangka panjang untuk pertumbuhan perusahaan",
+            "Mengembangkan visi dan misi perusahaan",
+            "Membuat perencanaan strategis 5 tahun ke depan",
+            "Implementasi program efisiensi departemen",
+            "Koordinasi antar tim untuk proyek",
+            "Pengembangan kemampuan tim",
+            "Membuat laporan harian",
+            "Melakukan maintenance rutin",
+            "Menjalankan prosedur operasi standar"
+        ],
+        'label': [0, 0, 0, 1, 1, 1, 2, 2, 2]  # 0:Strategis, 1:Taktikal, 2:Operasional
+    }
+    
+    # Tokenisasi data
+    encoded_data = tokenizer(
+        initial_data['text'],
+        padding=True,
+        truncation=True,
+        return_tensors="pt"
+    )
+    
+    # Buat tensor untuk labels
+    labels = torch.tensor(initial_data['label'])
+    
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir="./results",
+        num_train_epochs=3,
+        per_device_train_batch_size=4,
+        logging_dir="./logs",
+    )
+    
+    # Initialize trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=Dataset.from_dict({
+            'input_ids': encoded_data['input_ids'],
+            'attention_mask': encoded_data['attention_mask'],
+            'labels': labels
+        })
+    )
+    
+    # Train model
+    trainer.train()
+    
+    return model
+
+# Initialize model weights jika model berhasil dimuat
+if model is not None:
+    model = initialize_model_weights()
 
 # Definisikan kriteria klasifikasi
 def classify_activity(description):
@@ -22,70 +102,39 @@ def classify_activity(description):
     else:
         return "Operasional", "Kegiatan berfokus pada operasi sehari-hari, efisiensi, dan pencapaian tujuan jangka pendek."
 
-# Contoh dataset
-data = {
-    'activity': [
-        "Merumuskan strategi jangka panjang untuk pertumbuhan perusahaan",
-        "Mengimplementasikan strategi pemasaran baru",
-        "Melakukan audit keuangan bulanan"
-    ]
-}
-
-# Buat DataFrame
-df = pd.DataFrame(data)
-
-# Tambahkan kolom klasifikasi dan keterangan
-df['classification'], df['description'] = zip(*df['activity'].apply(classify_activity))
-
-# Tampilkan DataFrame
-print(df)
-access_token = st.secrets["HUGGINGFACE_API_KEY"]  
-
-try:
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, token=access_token)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, token=access_token)
-except OSError as e:
-    print(f"Error loading model: {e}")
-    # Handle the error appropriately
-
 # Function to preprocess text using IndoBERT tokenizer
 def preprocess_text(text):
     inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
     return inputs
 
 # Function to predict using IndoBERT model
-def get_classification_explanation(classification):
-    explanations = {
-        "Strategis": "Klasifikasi Strategis karena berkaitan dengan perencanaan jangka panjang, visi misi, dan tujuan organisasi secara keseluruhan, peningkatan revenue, produktivitas, menurunkan risk insiden besar, keberlanjutan, manajemen integritas, transformasi, ketangguhan, efisensi energi, dan reputasi perusahaan",
-        "Taktikal": "Klasifikasi Taktikal karena berfokus pada identifikasi dan mitigasi risiko, Kehandalan peralatan, audit internal, implementasi rencana jangka menengah, kolaborasi dan koordinasi antar departemen, kesehatan dan keselamatan kerja.", 
-        "Operasional": "Klasifikasi Operasional karena menyangkut kegiatan sehari-hari, mengurangi waktu henti operasi, menyusun jadwal, menetapkan prosedur pekerjaan, pelaksanaan tugas rutin, pemeliharan, training,  dan implementasi langsung di lapangan."
-    }
-    return explanations.get(classification, "Tidak ada penjelasan tersedia")
-
 def predict_text(inputs):
     with torch.no_grad():
         outputs = model(**inputs)
         logits = outputs.logits
+        probabilities = torch.softmax(logits, dim=1)
         predictions = torch.argmax(logits, dim=1)
-    return predictions.item()
+        confidence = torch.max(probabilities, dim=1).values
+        
+        # Mapping hasil prediksi
+        prediction_map = {
+            0: "Strategis",
+            1: "Taktikal",
+            2: "Operasional"
+        }
+        
+        predicted_class = prediction_map[predictions.item()]
+        confidence_score = confidence.item()
+        
+        return predicted_class, confidence_score
 
-# Function to train the model (not needed since we use pre-trained IndoBERT)
-def train_model(df, text_column, label_column):
-    # Since we are using a pre-trained model, we don't need to train it here
-    # But we can still use this function to load and prepare the data
-    labels = df[label_column].unique()
-    label_map = {label: i for i, label in enumerate(labels)}
-    df['label'] = df[label_column].map(label_map)
-    
-    return df, label_map
-
-# Function to save the model (not needed since we use pre-trained IndoBERT)
-def save_model():
-    pass
-
-# Function to load the model (not needed since we use pre-trained IndoBERT)
-def load_model():
-    pass
+def get_classification_explanation(classification):
+    explanations = {
+        "Strategis": "Klasifikasi Strategis karena berkaitan dengan perencanaan jangka panjang, visi misi, dan tujuan organisasi secara keseluruhan, peningkatan revenue, produktivitas, menurunkan risk insiden besar, keberlanjutan, manajemen integritas, transformasi, ketangguhan, efisensi energi, dan reputasi perusahaan",
+        "Taktikal": "Klasifikasi Taktikal karena berfokus pada identifikasi dan mitigasi risiko, Kehandalan peralatan, audit internal, implementasi rencana jangka menengah, kolaborasi dan koordinasi antar departemen, kesehatan dan keselamatan kerja.", 
+        "Operasional": "Klasifikasi Operasional karena menyangkut kegiatan sehari-hari, mengurangi waktu henti operasi, menyusun jadwal, menetapkan prosedur pekerjaan, pelaksanaan tugas rutin, pemeliharan, training, dan implementasi langsung di lapangan."
+    }
+    return explanations.get(classification, "Tidak ada penjelasan tersedia")
 
 # Sidebar for uploading and training data
 st.sidebar.header('Upload Data Training')
@@ -101,9 +150,8 @@ if train_file is not None:
         label_column = st.sidebar.selectbox('Pilih kolom label (STRATEGIS/TAKTIKAL/OPERASIONAL):', train_df.columns)
         
         # Get the label map
-        train_df, label_map = train_model(train_df, text_column, label_column)
-        
-        # Invert the label map for prediction
+        labels = train_df[label_column].unique()
+        label_map = {label: i for i, label in enumerate(labels)}
         label_map_inv = {v: k for k, v in label_map.items()}
         
         if st.sidebar.button('Train Model'):
@@ -131,12 +179,15 @@ with tab1:
             if st.button('Klasifikasi File'):
                 with st.spinner('Mengklasifikasi data...'):
                     predictions = []
+                    confidences = []
                     for text in pred_df[pred_column]:
                         inputs = preprocess_text(text)
-                        prediction = predict_text(inputs)
-                        predictions.append(label_map_inv[prediction])
+                        predicted_class, confidence = predict_text(inputs)
+                        predictions.append(predicted_class)
+                        confidences.append(confidence)
                     
                     pred_df['Hasil_Klasifikasi'] = predictions
+                    pred_df['Confidence_Score'] = confidences
                     pred_df['Penjelasan'] = pred_df['Hasil_Klasifikasi'].apply(get_classification_explanation)
                     st.write('Hasil Klasifikasi:')
                     st.dataframe(pred_df)
@@ -165,20 +216,13 @@ with tab2:
         else:
             with st.spinner('Mengklasifikasi teks...'):
                 inputs = preprocess_text(input_text)
-                prediction = predict_text(inputs)
+                predicted_class, confidence = predict_text(inputs)
+                
                 st.write('Hasil Klasifikasi:')
-                # Add debugging statements
-                print(f"Prediction: {prediction}")
-                print(f"Label Map Inv: {label_map_inv}")
-
-                # Ensure prediction is a valid key in label_map_inv
-                if prediction in label_map_inv:
-                    classification = label_map_inv[prediction]
-                    explanation = get_classification_explanation(classification)
-                    st.info(f"Teks termasuk kategori: {classification}")
-                    st.info(f"Penjelasan: {explanation}")
-                else:
-                    st.error(f"Invalid prediction: {prediction}. Valid labels are: {list(label_map_inv.keys())}")
+                st.info(f"Teks termasuk kategori: {predicted_class}")
+                st.info(f"Tingkat keyakinan: {confidence:.2%}")
+                explanation = get_classification_explanation(predicted_class)
+                st.info(f"Penjelasan: {explanation}")
 
 # Additional information
 st.markdown("""
