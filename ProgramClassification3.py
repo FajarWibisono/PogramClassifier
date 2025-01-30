@@ -1,4 +1,6 @@
 import streamlit as st
+import os
+import sys
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
 import torch
 import pandas as pd
@@ -6,29 +8,66 @@ import numpy as np
 from io import BytesIO
 from datasets import Dataset
 
+# Tambahkan debug info
+st.write(f"Python version: {sys.version}")
+st.write(f"Current working directory: {os.getcwd()}")
+
+# Import transformers dengan error handling
+try:
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    st.success("Successfully imported transformers")
+except Exception as e:
+    st.error(f"Error importing transformers: {str(e)}")
+    
+# Import Trainer dengan error handling terpisah
+try:
+    from transformers import Trainer, TrainingArguments
+    st.success("Successfully imported Trainer and TrainingArguments")
+except Exception as e:
+    st.error(f"Error importing Trainer: {str(e)}")
+
+# Import Dataset dengan error handling
+try:
+    from datasets import Dataset
+    st.success("Successfully imported Dataset")
+except Exception as e:
+    st.error(f"Error importing Dataset: {str(e)}")
+
 # Constants
 NUM_LABELS = 3  # Jumlah kelas: Strategis, Taktikal, Operasional
 model_name = "indobenchmark/indobert-large-p2"
 
 # Cache untuk model dan tokenizer
 @st.cache_resource
+@st.cache_resource
 def load_model_and_tokenizer():
     try:
+        # Tambahkan logging
+        st.write("Attempting to load model and tokenizer...")
+        
+        # Load tokenizer first
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            token=st.secrets["HUGGINGFACE_API_KEY"],
+            use_fast=True
+        )
+        st.success("Tokenizer loaded successfully")
+        
+        # Then load model
         model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
             num_labels=NUM_LABELS,
             token=st.secrets["HUGGINGFACE_API_KEY"],
-            ignore_mismatched_sizes=True
+            ignore_mismatched_sizes=True,
+            from_tf=False
         )
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            token=st.secrets["HUGGINGFACE_API_KEY"]
-        )
+        st.success("Model loaded successfully")
+        
         return model, tokenizer
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
+        st.error(f"Error in load_model_and_tokenizer: {str(e)}")
         return None, None
-
+        
 # Load model dan tokenizer
 model, tokenizer = load_model_and_tokenizer()
 
