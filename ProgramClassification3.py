@@ -8,30 +8,21 @@ import numpy as np
 from io import BytesIO
 from datasets import Dataset
 
-# Tambahkan debug info
-st.write(f"Python version: {sys.version}")
-st.write(f"Current working directory: {os.getcwd()}")
+# Debug information
+st.write("Starting app...")
 
 # Import transformers dengan error handling
 try:
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-    st.success("Successfully imported transformers")
+    from transformers import AutoTokenizer
+    st.write("Successfully imported AutoTokenizer")
+    from transformers import AutoModelForSequenceClassification
+    st.write("Successfully imported AutoModelForSequenceClassification")
+    from transformers import Trainer, TrainingArguments
+    st.write("Successfully imported Trainer and TrainingArguments")
 except Exception as e:
     st.error(f"Error importing transformers: {str(e)}")
-    
-# Import Trainer dengan error handling terpisah
-try:
-    from transformers import Trainer, TrainingArguments
-    st.success("Successfully imported Trainer and TrainingArguments")
-except Exception as e:
-    st.error(f"Error importing Trainer: {str(e)}")
+    st.stop()
 
-# Import Dataset dengan error handling
-try:
-    from datasets import Dataset
-    st.success("Successfully imported Dataset")
-except Exception as e:
-    st.error(f"Error importing Dataset: {str(e)}")
 
 # Constants
 NUM_LABELS = 3  # Jumlah kelas: Strategis, Taktikal, Operasional
